@@ -1,5 +1,5 @@
 function ci = ci_generate(ci_meal) % [(mg/dL)/(5 min)]
-% generate ci (curb impact, i.e. insulin counteraction) structure from ci_meal entry
+% generate ci (carb impact, i.e. insulin counteraction) structure from ci_meal entry
 %
 % ci_meal example
 % ci_meal.carbs = 100; % total meal carbs [g]

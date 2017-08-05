@@ -13,7 +13,7 @@ global CIR; % carb to insulin ratio [g/U]
 global n_sim; % number of 5-min steps
 % setup meal, system and simulation parameters
 meal_carbs = 50; % grams of carbs in the meal
-meal_absorption_time = 4*60; % carbs absorption time in minutes
+meal_absorption_time = 5*60; % carbs absorption time in minutes
 % default constant absorption rate, arbitrary curve can be setup below
 meal_start_time = 60; % meal time in minutes after start of simulation
 pre_bolus_time = 20; % pre-bolus time (i.e. time when meal entered), in minutes ahead of the meal
@@ -22,8 +22,8 @@ bg_initial = 100; % initial bg value [mg/dL]
 algorithm.bolus = true; % true = use dynamic dosing for bolus, false = current Loop
 algorithm.temp = true; % true = use dynamic dosing for temps, false = current Loop
 algorithm.accept = true; % true = accept and deliver bolus, false = let Loop handle all
-algorithm.alpha = 1; % agressiveness factor, 0 = no dynamic super bolusing
-sim_time = 10; % simulation time [h]
+algorithm.alpha = 0.5; % agressiveness factor, 0 = no dynamic super bolusing
+sim_time = 11; % simulation time [h]
 pause_times = []; % array of time indeces (1 to n_sim), e.g. [1 10 20] to pause and show current display prediction curve
 % system parameters
 DIA = 6;
@@ -45,7 +45,7 @@ nDIA = round(DIA*60/5)+1; % number of time slots in DIA
 %% setup insulin absorption curves, bg array, meal 
 % normalized scalable exponential insulin activity and IOB curves
 td = DIA*60; % insulin duration in minutes
-tp = 55; % insulin peak time, nominally Novolog = 75, fiasp = 55
+tp = 75; % insulin peak time, nominally Novolog = 75, fiasp = 55
 % insulin curves
 tau = tp*(td-tp)/(td-2*tp); % time constant of exp decay
 S = ((td/tau)^2)*exp(td/tau)/((td-2*tau)*exp(td/tau)+td+2*tau); % aux scale factor
@@ -160,34 +160,60 @@ end
 [xt,yt] = stairs(ci.time,temp_basal); % nicer plot of temps
 %
 % outputs
+[BGmin, indexBGmin] = min(bg);
+[BGmax, indexBGmax] = max(bg);
 fprintf('\ndosing algorithm options\n');
 disp(algorithm);
 fprintf('bolus = %4.2f\n',bolus); % maximum bg over simulation time
-fprintf('maximum BG = %3.0f\n',max(bg)); % maximum bg over simulation time
-fprintf('minimum BG = %3.0f\n',min(bg)); % minimum bg over simulation time 
+fprintf('maximum BG = %3.0f\n',BGmax); % maximum bg over simulation time
+fprintf('minimum BG = %3.0f\n',BGmin); % minimum bg over simulation time 
+plot_times = ci.time-meal_start_time;
 % plot results
+strmin = num2str(round(BGmin));
+strmax = num2str(round(BGmax));
+if(algorithm.bolus)
+    titlestr = ['dynamic dosing, \alpha = ' num2str(algorithm.alpha)];
+else
+    titlestr = ['DIA dosing'];
+end
+if(algorithm.accept)
+    bolusstr = [', bolus = ' num2str(round(bolus,2))];
+else
+    bolusstr = [', skip bolus'];
+end
+if(algorithm.temp)
+    tempstr = ['dynamic dosing, min = ' num2str(min_temp_rate) ', max = ' num2str(max_temp_rate) ];
+else
+    tempstr = ['DIA dosing, min = ' num2str(min_temp_rate) ', max = ' num2str(max_temp_rate) ];
+end
+%
 figure(1);
 clf;
-%
 subplot(3,1,1) % insulin activity and carb counteraction  
     hold on;
-    plot(ci.time-meal_start_time,bg_impact,'g','LineWidth',2);
-    plot(ci.time-meal_start_time,ci.value,'r','LineWidth',2);
+    plot(plot_times,bg_impact,'g','LineWidth',2);
+    plot(plot_times,ci.value,'r','LineWidth',2);
      axis([-meal_start_time ...
      sim_time_minutes-meal_start_time ...
      -1 inf]);
+    title(['Insulin action and counteraction, ' titlestr bolusstr ...
+        ', DIA = ' num2str(DIA) ', tp = ' num2str(tp)],...
+        'FontSize',10,'FontWeight','normal');
     grid on;
     hold off;
 %
 subplot(3,1,2) % bg
     hold on;
-    plot(ci.time-meal_start_time,bg,'b','LineWidth',2);
-    plot(ci.time-meal_start_time,bg_guard*ones(n_sim,1),'r','LineWidth',1);
-    plot(ci.time-meal_start_time,bg_target*ones(n_sim,1),'--k','LineWidth',1);
+    plot(plot_times,bg,'b','LineWidth',2);
+    plot(plot_times,bg_guard*ones(n_sim,1),'r','LineWidth',1);
+    plot(plot_times,bg_target*ones(n_sim,1),'--k','LineWidth',1);
     grid on;
      axis([-meal_start_time ...
      sim_time_minutes-meal_start_time ...
-     50 inf]);
+     50 200]);
+    title('BG [mg/dL]','FontSize',10,'FontWeight','normal');
+    text(plot_times(indexBGmin),BGmin,strmin);
+    text(plot_times(indexBGmax),BGmax,strmax);
     hold off;
 %
 subplot(3,1,3) % temps
@@ -197,4 +223,6 @@ subplot(3,1,3) % temps
      axis([-meal_start_time ...
      sim_time_minutes-meal_start_time ...
      min_temp_rate max_temp_rate]);
+    title(['Basal [U/h], ' tempstr], ...
+        'FontSize',10,'FontWeight','normal');
     hold off;
