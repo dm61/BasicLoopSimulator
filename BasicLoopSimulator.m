@@ -13,7 +13,7 @@ global CIR; % carb to insulin ratio [g/U]
 global n_sim; % number of 5-min steps
 % setup meal, system and simulation parameters
 meal_carbs = 50; % grams of carbs in the meal
-meal_absorption_time = 6*60; % carbs absorption time in minutes
+meal_absorption_time = 4*60; % carbs absorption time in minutes
 % default constant absorption rate, arbitrary curve can be setup below
 meal_start_time = 60; % meal time in minutes after start of simulation
 pre_bolus_time = 20; % pre-bolus time (i.e. time when meal entered), in minutes ahead of the meal
@@ -101,7 +101,9 @@ for i=2:n_sim
             bolus = min(suggested_bolus_array);
             bolus = max(0,bolus);
         end
-        if(~algorithm.accept) bolus = 0; end % option to not deliver suggested bolus
+        if(~algorithm.accept) % algorithm option to not deliver suggested bolus
+            bolus = 0; 
+        end 
         bg_impact(i:i+nDIA-1) = bg_impact(i:i+nDIA-1)+bolus*ISF*I_activity_array;
     end
     bg(i) = bg(i-1) + ci.value(i)- bg_impact(i); % actual bg update
