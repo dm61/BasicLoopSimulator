@@ -1,13 +1,15 @@
 % A Very Basic Loop Simulator
 % @dm61 8/6/2017
+% 9/3/2017 make code compatible with Octave 
 
 % Assumptions and limitations 
-%   IOB(0)=0, COB(0)=0
-%   Single meal with known carb absorption  
+%   Initially IOB(0)=0, COB(0)=0
+%   Simulation of a single meal with known carb absorption  
 %   Ideal system model: deltaBG = (carb impact)-(insulin impact)
 %   Does not incude Loop RC or momentum effects or dynamic carb algorithm
+%   Assumes a single fixed nominal basal rate during entire simulation
 %   Includes exponential insulin absorption curves with td, tp parameters
-%   Includes current Loop and dynamic dosing algorithms (see: algorithm below) 
+%   Includes Loop v1.4 and Loop v1.5 dosing algorithms (see: algorithm section below) 
 
 % global variables accessed from ci_generate
 global DIA; % duration of insulin action [h], td = DIA
@@ -17,35 +19,38 @@ global n_sim; % number of 5-min simulation steps
 
 % meal parameters
 meal_carbs = 50; % grams of carbs in the meal
-meal_absorption_time = 2*60; % carbs absorption time in minutes
+CA = 3; % carb absorption time in hours
 % default constant absorption rate, arbitrary curve can be setup below
 meal_start_time = 60; % meal time in minutes after start of simulation
 pre_bolus_time = 20; % pre-bolus time (i.e. time when meal entered), in minutes ahead of the meal
 bg_initial = 100; % initial bg value [mg/dL]
 
 % algorithm options
-algorithm.bolus = true; % true = use dynamic dosing for bolus, false = current Loop
-algorithm.temp = true; % true = use dynamic dosing for temps, false = current Loop
+algorithm.bolus = true; % true = use Loop v1.5 dosing for bolus, false = Loop v1.4 dosing
+algorithm.temp = true; % true = use Loop v1.5 dosing for temps, false = Loop v1.4 dosing
 algorithm.accept = true; % true = accept and deliver bolus, false = let Loop handle all
-algorithm.alpha = 0.5; % agressiveness factor, 0 = no dynamic super bolusing
-algorithm.target = 'dynamic'; % 'dynamic' (blend) or 'target' (least agressive) or 'guard' (most agressive)
-sim_time = 12; % simulation time [h]
-pause_times = []; % array of time indeces (1 to n_sim), e.g. [1 10 20] to pause and show current display prediction curve
+algorithm.alpha = 0.0; % dynamic super bolusing agressiveness (alpha = 0 to 1), 0 = no dynamic super bolusing (as in Loop v1.5)
+algorithm.target = 'dynamic'; % 'dynamic' (blend as in Loop v1.5) or 'target' (least agressive) or 'suspend' (most agressive)
+sim_time = 12; % total simulation time [h]
+pause_times = []; % array of time indeces (1 to n_sim), e.g. [1 10 20] to pause and display current BG prediction curve
 
 % user selectable model parameters
-DIA = 6;
-ISF = 50;
-CIR = 10;
-bg_target_max = 100; % uppper limit of the bg target
-bg_target_min = 100; % lower limit of the bg target
-bg_guard = 70; % bg guard, no bolus suggested below this level, zero temp below this level
+ISF = 50; % insulin sensitivity [(mg/dL)/U]
+CIR = 10; % carb ratio [g/U]
+bg_target_max = 100; % uppper limit of the bg correction range
+bg_target_min = 100; % lower limit of the bg correction range
+bg_suspend = 70; % bg suspend, no bolus suggested below this level, zero temp below this level
 bg_target = (bg_target_max+bg_target_min)/2; % target bg value
 basal_rate = 0.5; % nominal basal rate [U/h]
-max_temp_rate = 5.0; % maximum temp [U/h]
+max_temp_rate = 10.0; % maximum temp [U/h]
+
+% insulin absorption model
+DIA = 6; % DIA = td (it is recommended to keep this as is)
 td = DIA*60; % insulin duration in minutes
-tp = 75; % insulin peak time, nominally Novolog = 75, fiasp = 55
+tp = 75; % insulin peak time, nominally Novolog = 75, FIASP = 55
 
 % simulation setup
+meal_absorption_time = CA*60; % carbs absorption time in minutes
 min_temp_rate = -basal_rate; % minimum temp (negative) [U/h]
 n_sim = round(sim_time*60/5)+1; % total number of simulation points
 sim_time_minutes = n_sim*5;
@@ -58,24 +63,25 @@ S = ((td/tau)^2)*exp(td/tau)/((td-2*tau)*exp(td/tau)+td+2*tau); % aux scale fact
 Ia = @(t) S.*(t./td).*(1-t./td).*exp(-t/tau); % insulin activity (AUC=1)
 IOB = @(t) 1-(S/td).*(tau/td).*(exp(-t/tau).*(t.^2 - td*(t+tau) +2*tau^2 + 2*tau*t)+tau*(td-2*tau));
 
-% dynamic dosing algorithm: zero-temping BG impact functions
+% dynamic super bolus (not yet in Loop): zero-temping BG impact functions
 low_temp_scale = -(min_temp_rate/60)*ISF; % asymptote of the bg rate of change due to zero temping
 % bg impact of zero temping as a function of time
 BGTempImpact = @(t) low_temp_scale*(S/td)*(tau/td)*tau*...
     (exp(-t/tau).*(-6*tau^2+2*tau*(td-2*t)+t.*(td-t))+...
     6*tau^2-2*tau*td-2*tau*t+td*t);
 
-% dynamic dosing algorithm: BG target function
+% BG target function
+% (note: blend is slightly different, needs to be updated to the version in Loop 1.5)
 switch algorithm.target
     case 'target' % least agressive
         BGtarget_bolus = @(t) bg_target; % fixed target at bg_target for bolus
         BGtarget_temp = @(t) bg_target; % fixed target at bg_target for temps
-    case 'guard' % most agressive
-        BGtarget_bolus = @(t) bg_guard; % fixed target at bg_guard for bolus
-        BGtarget_temp = @(t) bg_guard + (bg_target-bg_guard)*t/(DIA*60); % dynamic target for temp
-    otherwise % dynamic target blend from bg_guard at t=0 to bg_target at td
-        BGtarget_bolus = @(t) bg_guard + (bg_target-bg_guard)*t/(DIA*60); % dynamic target for bolus
-        BGtarget_temp = @(t) bg_guard + (bg_target-bg_guard)*t/(DIA*60); % dynamic target for temp
+    case 'suspend' % most agressive
+        BGtarget_bolus = @(t) bg_suspend; % fixed target at bg_suspend for bolus
+        BGtarget_temp = @(t) bg_suspend + (bg_target-bg_suspend)*t/(DIA*60); % blend target for temps
+    otherwise % dynamic target blend from bg_suspend at t=0 to bg_target at td
+        BGtarget_bolus = @(t) bg_suspend + (bg_target-bg_suspend)*t/(DIA*60); % blend target for bolus
+        BGtarget_temp = @(t) bg_suspend + (bg_target-bg_suspend)*t/(DIA*60); % blend target for temps
 end
         
 % meal setup, flat rate assumed below, can be modified 
@@ -106,11 +112,11 @@ for i=2:n_sim
             bg_predicted(j) = bg_predicted(j-1) + ci.value(j); 
         end
         if(~algorithm.bolus)
-            % conventional dosing
+            % Loop v1.4 dosing
             bolus = (bg_predicted(i+nDIA-1)-bg_target)/ISF;
             bolus = max(0,bolus);
         else
-            % dynamic dosing
+            % Loop v1.5 dosing
             suggested_bolus_array = ...
                 (bg_predicted(i+1:i+nDIA-1)+algorithm.alpha*BGTempImpact(DIA_times)'-BGtarget_bolus(DIA_times)')./ ...
                 (1-IOB(DIA_times)')/ISF;
@@ -142,7 +148,7 @@ for i=2:n_sim
             end
         end
         
-        if any(pause_times == i) % pause to show current prediction, enter to continue
+        if any(pause_times == i) % pause to display current prediction, enter to continue
             clf;
             plot(ci.time,bg_predicted,'k','LineWidth',2);
             disp(bg_predicted(i+nDIA));
@@ -152,10 +158,10 @@ for i=2:n_sim
         
         if(i >= n_bolus) % temps only if meal has been entered since we assume IOB=0,COB=0 initially
             if(~algorithm.temp)
-                % DIA-based Loop temp dosing
+                % Loop v1.4 temp dosing
                 five_minute_dose = ((bg_predicted(i+nDIA)-bg_target)/ISF)*5/30;
             else
-                % dynamic temp dosing
+                % Loop v1.5 temp dosing
                 suggested_dose_array = ...
                     (bg_predicted(i+1:i+nDIA-1)-BGtarget_temp(DIA_times)')./ ...
                     (1-IOB(DIA_times)')/ISF;
@@ -176,7 +182,7 @@ for i=2:n_sim
             five_minute_dose = min_temp_rate*5/60;
         end
         
-        if any(bg_predicted(i+1:n_sim) < bg_guard) % bg guard
+        if any(bg_predicted(i+1:n_sim) < bg_suspend) % bg suspend
             five_minute_dose = min_temp_rate*5/60;
         end
         
@@ -205,19 +211,19 @@ plot_times = ci.time-meal_start_time;
 strmin = num2str(round(BGmin));
 strmax = num2str(round(BGmax));
 if(algorithm.bolus)
-    titlestr = ['dynamic dosing, \alpha = ' num2str(algorithm.alpha)];
+    titlestr = ['Loop v1.5 dosing, \alpha = ' num2str(algorithm.alpha)];
 else
-    titlestr = 'DIA dosing';
+    titlestr = 'Loop v1.4 dosing';
 end
 if(algorithm.accept)
-    bolusstr = [', bolus = ' num2str(round(bolus,2))];
+    bolusstr = [', bolus = ' num2str(round(bolus*100)/100)];
 else
     bolusstr = ', skip bolus';
 end
 if(algorithm.temp)
-    tempstr = ['dynamic dosing, min = ' num2str(min_temp_rate) ', max = ' num2str(max_temp_rate) ];
+    tempstr = ['Loop v1.5 dosing, min = ' num2str(min_temp_rate) ', max = ' num2str(max_temp_rate) ];
 else
-    tempstr = ['DIA dosing, min = ' num2str(min_temp_rate) ', max = ' num2str(max_temp_rate) ];
+    tempstr = ['Loop v1.4 dosing, min = ' num2str(min_temp_rate) ', max = ' num2str(max_temp_rate) ];
 end
 
 % plot results
@@ -233,7 +239,7 @@ else
 end
 clf;
 
-subplot(3,1,1) % insulin activity and carb counteraction  
+subplot(3,1,1) % plot insulin activity and carb counteraction  
     hold on;
     plot(plot_times,bg_impact,'g','LineWidth',2);
     plot(plot_times,ci.value,'r','LineWidth',2);
@@ -249,7 +255,7 @@ subplot(3,1,1) % insulin activity and carb counteraction
 subplot(3,1,2) % bg
     hold on;
     plot(plot_times,bg,'b','LineWidth',2);
-    plot(plot_times,bg_guard*ones(n_sim,1),'r','LineWidth',1);
+    plot(plot_times,bg_suspend*ones(n_sim,1),'r','LineWidth',1);
     plot(plot_times,bg_target*ones(n_sim,1),'--k','LineWidth',1);
     grid on;
      axis([-meal_start_time ...

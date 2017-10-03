@@ -1,4 +1,5 @@
 function ci = ci_generate(ci_meal) % [(mg/dL)/(5 min)]
+% 9/3/2017 make code compatible with Octave  
 % generate ci (carb impact, i.e. insulin counteraction) structure from ci_meal entry
 
 % ci_meal example
@@ -19,7 +20,7 @@ ci.value = zeros(1,n_sim)';
 % aux variables
 n_meal_end = max(ci_meal.time)/5+1;
 ci_temp.time = (0:5:(n_meal_end-1)*5)';
-ci_temp.value = interp1q(ci_meal.time,ci_meal.value,ci_temp.time);
+ci_temp.value = interp1(ci_meal.time,ci_meal.value,ci_temp.time);
 scale = ci_meal.carbs*(ISF/CIR)/sum(ci_temp.value);
 ci_temp.value = ci_temp.value.*scale;
        
